@@ -1,79 +1,52 @@
 ---
 name: codex-windows-wsl-connectivity
-description: Diagnose and repair login, authentication, credential sharing, proxy, HTTPS, and WebSocket problems across Codex CLI, Codex Desktop, and the Codex VS Code extension on Windows and WSL2. Use when the three Codex clients behave differently, Desktop or the extension waits for network, CLI works only in one terminal, VS Code launches its backend in WSL, proxy variables are missing or inherited incorrectly, refresh tokens are revoked or stale, Windows and WSL login states diverge, a model is unavailable for the current authentication mode, or Node/NVM-based Codex CLI installation needs recovery.
+description: Diagnose and repair network and login problems for Codex CLI, Codex Desktop, and the Codex VS Code extension on Windows and WSL2. Use when a client cannot connect, waits for network, fails through a proxy, loses login state, reports a revoked token, or Windows and WSL behave differently.
 ---
 
-# Codex Three-Client Login, Authentication, and Networking
+# Codex CLI、Desktop、VS Code 排障
 
-Restore Codex CLI, Desktop, and VS Code extension access without conflating their process environments, authentication files, network stacks, or optional WSL execution backend.
+只处理两类问题：网络和登录。先确认故障发生在 CLI、Desktop，还是 VS Code 插件；VS Code 插件还要确认后端运行在 Windows 还是 WSL。
 
-## Scope
+## 安全规则
 
-Treat the problem as three client surfaces and three independent layers:
+- 修改配置前先备份。
+- 不输出 `auth.json`、令牌、API Key 或代理凭据。
+- 复制认证文件必须获得用户明确授权。
+- 执行 `wsl --shutdown` 前提醒用户：它会关闭 WSL 终端和 Remote 会话。
 
-| Client surface | Login and authentication | Network and proxy |
-|---|---|---|
-| Codex CLI | Determine whether it uses ChatGPT OAuth or an API key and which `auth.json` its runtime reads | Inspect the launching shell's inherited proxy variables and CLI runtime location |
-| Codex Desktop | Verify its Windows login state and user credential file | Inspect Windows user environment variables, HTTPS, and secure WebSocket transport |
-| Codex VS Code extension | Determine whether the extension backend runs on Windows or in WSL and which credential file it reads | Inspect VS Code process inheritance, extension settings, WSL networking mode, and proxy reachability |
+## 1. 解决三端网络问题
 
-Always separate these layers:
+### 先确认代理
 
-1. **Login state:** whether the user has signed in or supplied an API key.
-2. **Credential validity:** whether the access/refresh credential is present, current, and permitted to use the requested model.
-3. **Network transport:** whether DNS, HTTPS, proxying, and WebSocket upgrades work in the actual runtime environment.
+依次检查：
 
-A successful result on one client or layer does not prove the other clients or layers work.
+1. 代理程序是否运行，监听地址、端口和协议是否正确。
+2. 系统代理、TUN/PAC、路由规则和 OpenAI 域名规则是否放行。
+3. 启动脚本、Shell 配置和环境变量是否覆盖了代理设置。
+4. HTTPS 与 WebSocket 是否都能通过；普通网页能打开不代表 WebSocket 可用。
 
-## Safety rules
+可先运行 `scripts/diagnose-codex-connectivity.ps1`；需要联网测试时再加 `-TestNetwork`。
 
-- Diagnose before mutating.
-- Never print `auth.json`, API keys, cookies, proxy credentials, or full environment-variable values containing secrets.
-- Before replacing `.wslconfig`, `.bashrc`, `config.toml`, VS Code settings, or `auth.json`, create a timestamped backup.
-- Treat copying `auth.json` as credential transfer. Do it only when the user explicitly authorizes synchronizing the same account between their Windows and WSL environments.
-- Hash credential files to verify equality; never inspect their contents.
-- Do not disable TLS verification or certificate validation to work around connectivity failures.
-- Warn that `wsl --shutdown` terminates WSL terminals and VS Code Remote sessions.
+### Codex CLI
 
-## Core workflow
+确认 CLI 进程继承了正确的代理环境变量。只在当前终端设置的变量只影响该终端及其子进程。
 
-### 1. Identify the failing surface
+### Codex Desktop
 
-Classify the failure:
+Desktop 尤其要检查 Windows 用户级环境变量：
 
-- Desktop/Chat works but Codex does not: suspect a separate Codex network stack and missing proxy environment variables.
-- CLI works only in the terminal where variables were set: suspect process inheritance or variable scope.
-- VS Code shows `Reconnecting... waiting for network`: inspect whether Windows extension settings launch Codex inside WSL.
-- `refresh token was revoked`: fix authentication after connectivity; do not call it a proxy error.
-- `model is not supported with a ChatGPT account`: distinguish ChatGPT OAuth from API-key authentication; logged-out is not an access mode.
+- `HTTP_PROXY`
+- `HTTPS_PROXY`
+- `ALL_PROXY`
+- `NO_PROXY=localhost,127.0.0.1,::1`
 
-Run `scripts/diagnose-codex-connectivity.ps1` first. Add `-TestNetwork` only when an external request is appropriate.
+代理示例为 `http://127.0.0.1:7897`。修改用户级变量后，完全退出并重启 Desktop；旧进程不会自动获得新变量。
 
-### 2. Map execution boundaries
+如果 `%USERPROFILE%\.codex\config.toml` 含有非必要的 `supports_websockets = false`，备份后只删除该覆盖项。
 
-| Surface | Typical environment | Credential path |
-|---|---|---|
-| Codex Desktop | Windows app plus child processes | `%USERPROFILE%\.codex\auth.json` |
-| Codex CLI on Windows | Launching Windows shell | `%USERPROFILE%\.codex\auth.json` |
-| VS Code Codex extension | Extension installed on Windows | Windows extension directory |
-| Codex launched by VS Code in WSL | Linux process inside selected distro | `~/.codex/auth.json` |
-| Native Codex CLI in WSL | Linux shell | `~/.codex/auth.json` |
+### VS Code 插件与 WSL
 
-Do not infer runtime location from the extension installation directory alone. Inspect `chatgpt.runCodexInWindowsSubsystemForLinux` and the actual WSL files/processes.
-
-### 3. Repair Windows connectivity
-
-Read [references/windows-and-vscode.md](references/windows-and-vscode.md) when Windows Desktop, CLI, or VS Code is involved.
-
-Use `HTTP_PROXY`, `HTTPS_PROXY`, and `ALL_PROXY` when the Codex component ignores the Windows system proxy. Add `NO_PROXY` for loopback destinations. Restart the parent application after changing user-scoped variables because existing processes retain their old environment.
-
-If `config.toml` contains `supports_websockets = false`, remove only that override unless the user explicitly needs HTTP-only fallback. Verify secure WebSocket upgrades through the proxy rather than assuming ordinary HTTPS proves WebSocket support.
-
-### 4. Select a WSL2 network strategy
-
-Read [references/wsl-and-auth.md](references/wsl-and-auth.md) before editing `.wslconfig`, shell startup files, or credentials.
-
-Prefer mirrored mode on supported Windows 11 systems when the Windows proxy listens only on `127.0.0.1`:
+先确认插件后端是否在 WSL。若在 WSL，使用 `%USERPROFILE%\.wslconfig`：
 
 ```ini
 [wsl2]
@@ -82,38 +55,32 @@ dnsTunneling=true
 autoProxy=true
 ```
 
-Then set WSL proxy variables to `http://127.0.0.1:<port>`.
+应用配置时执行 `wsl --shutdown`。镜像模式下 Windows 的 `127.0.0.1:7897` 可直接从 WSL 访问；先依赖 `autoProxy=true`，不要再混入 NAT 网关脚本。只有自动代理未生效时，才在 WSL 内补充指向 `127.0.0.1:<port>` 的代理变量。
 
-For NAT mode, resolve the Windows host gateway dynamically from `ip route show default`; never hardcode the gateway. NAT requires the Windows proxy to listen on a LAN-accessible address such as `0.0.0.0`, plus an appropriate firewall rule.
+## 2. 解决三端登录问题
 
-### 5. Repair authentication separately
+登录的本质是运行环境读取并刷新自己的认证文件：
 
-For a revoked refresh token, first try logout/sign-in. If Windows is authenticated and the same user's WSL credential is missing or stale, synchronize only with explicit authorization:
+| 运行环境 | 认证文件 |
+|---|---|
+| Windows CLI | `%USERPROFILE%\.codex\auth.json` |
+| Codex Desktop | `%USERPROFILE%\.codex\auth.json` |
+| VS Code 插件的 Windows 后端 | `%USERPROFILE%\.codex\auth.json` |
+| WSL CLI 或插件的 WSL 后端 | `~/.codex/auth.json` |
 
-1. Confirm both paths.
-2. Back up the WSL file when present.
-3. Copy without displaying content.
-4. Set `~/.codex` to `700` and `auth.json` to `600`.
-5. Compare SHA-256 hashes.
-6. Reload VS Code or restart the WSL CLI.
+重点：Windows 与 WSL 是两套文件。Windows 已登录不代表 WSL 内的后端已登录；插件安装在 Windows 也不代表其 Codex 后端运行在 Windows。
 
-Do not claim an extension is installed in WSL merely because its backend reads WSL credentials.
+处理顺序：
 
-### 6. Recover CLI tooling only when needed
+1. 确认实际运行环境和对应的 `auth.json` 路径。
+2. 文件缺失时在该环境重新登录。
+3. 出现 `refresh token was revoked` 时重新登录；复制一个已失效文件没有作用。
+4. 仅在用户明确要求同一账户同步时，将 Windows 文件复制到 WSL。
+5. 复制前备份 WSL 文件，复制后设置 `~/.codex` 为 `700`、`auth.json` 为 `600`，只比较 SHA-256，不读取内容。
+6. 重启 CLI、Desktop 或 VS Code 后验证。
 
-Read [references/node-cli.md](references/node-cli.md) for NVM for Windows, Node mirrors, npm registry configuration, global package inventory, or Codex CLI installation.
+模型不可用属于账户或认证方式权限问题，不要当成网络故障，也不要把“未登录”理解为可绕过权限。
 
-Prefer a native WSL Codex installation for direct WSL use. A Windows npm shim visible under `/mnt/c/...` is not a native WSL installation and may fail with `exec: node: not found`.
+## 最终验证
 
-### 7. Verify the outcome
-
-Verify in layers:
-
-1. Proxy listener exists on the expected Windows address and port.
-2. The target process sees the expected variables.
-3. WSL reports the expected networking mode.
-4. HTTPS reaches the service through the proxy. A Cloudflare challenge response still proves transport connectivity.
-5. Codex authentication status succeeds without printing credentials.
-6. A new Codex conversation streams without reconnect loops.
-
-Report which layer failed. Do not equate an HTTP 403 challenge with a dead proxy.
+分别在 CLI、Desktop 和 VS Code 新建会话。若仍失败，只报告它属于代理、WSL 网络、认证文件或账户权限中的哪一层。
