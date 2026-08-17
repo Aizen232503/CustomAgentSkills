@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex 三端登录与联网修复"
+  short_description: "排查 CLI、Desktop、VS Code 的登录认证和网络问题"
+  default_prompt: "Use $codex-windows-wsl-connectivity to diagnose and repair login, authentication, and networking across Codex CLI, Desktop, and the VS Code extension."
