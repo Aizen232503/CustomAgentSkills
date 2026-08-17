@@ -1,0 +1,29 @@
+# Secrets and local authentication
+.env
+.env.*
+!.env.example
+auth.json
+credentials.json
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Node dependencies and caches
+node_modules/
+.npm/
+.pnpm-store/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and temporary files
